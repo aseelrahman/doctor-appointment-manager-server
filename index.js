@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import { MongoClient, ServerApiVersion } from "mongodb";
+import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 
 dotenv.config();
 
@@ -23,14 +23,32 @@ async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
+
+    const db = client.db("doctimedb");
+    const doctorsCollection = db.collection("doctors");
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!",
+    // );
+
+    // GET /doctors - Retrieve and return all doctors from the database
+    app.get("/doctors", async (req, res) => {
+      const cursor = doctorsCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    // GET /doctors/:doctorId - Retrieve a specific doctor by ID
+    app.get("/doctors/:doctorId", async (req, res) => {
+      const { doctorId } = req.params;
+      const query = { _id: new ObjectId(doctorId) };
+      const result = await doctorsCollection.findOne(query);
+      res.send(result);
+    });
   } finally {
     // Ensures that the client will close when you finish/error
-    await client.close();
+    // await client.close();
   }
 }
 run().catch(console.dir);
