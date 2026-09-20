@@ -26,6 +26,9 @@ async function run() {
 
     const db = client.db("doctimedb");
     const doctorsCollection = db.collection("doctors");
+
+    await doctorsCollection.createIndex({ rating: -1 })
+    
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
     // console.log(
@@ -38,6 +41,12 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    app.get("/doctors/top-rated", async (req, res) => {
+      const cursor = doctorsCollection.find().sort({ rating: -1 }).limit(3);
+      const result = await cursor.toArray();
+      res.send(result);
+    })
 
     // GET /doctors/:doctorId - Retrieve a specific doctor by ID
     app.get("/doctors/:doctorId", async (req, res) => {
