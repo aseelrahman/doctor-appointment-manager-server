@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 
 dotenv.config();
@@ -19,6 +20,33 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
+
+console.log(JWKS);
+
+const verifyToken = async (req, res, next) => {
+  const { authorization } = req.headers;
+
+  if (!authorization?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const token = authorization.split(" ")[1];
+  try {
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: `${process.env.CLIENT_URL}`, // Should match your JWT issuer, which is the BASE_URL
+      audience: `${process.env.CLIENT_URL}`, // Should match your JWT audience, which is the BASE_URL by default
+    });
+    console.log(payload);
+    req.user = payload;
+    next();
+  } catch (error) {
+    console.error("Token validation failed:", error);
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+};
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -27,8 +55,8 @@ async function run() {
     const db = client.db("doctimedb");
     const doctorsCollection = db.collection("doctors");
 
-    await doctorsCollection.createIndex({ rating: -1 })
-    
+    await doctorsCollection.createIndex({ rating: -1 });
+
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
     // console.log(
@@ -46,10 +74,10 @@ async function run() {
       const cursor = doctorsCollection.find().sort({ rating: -1 }).limit(3);
       const result = await cursor.toArray();
       res.send(result);
-    })
+    });
 
     // GET /doctors/:doctorId - Retrieve a specific doctor by ID
-    app.get("/doctors/:doctorId", async (req, res) => {
+    app.get("/doctors/:doctorId", verifyToken, async (req, res) => {
       const { doctorId } = req.params;
       const query = { _id: new ObjectId(doctorId) };
       const result = await doctorsCollection.findOne(query);
