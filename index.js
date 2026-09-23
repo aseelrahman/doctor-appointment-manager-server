@@ -8,6 +8,7 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const port = process.env.PORT || 5005;
 const uri = process.env.MONGODB_URI;
@@ -39,7 +40,6 @@ const verifyToken = async (req, res, next) => {
       issuer: `${process.env.CLIENT_URL}`, // Should match your JWT issuer, which is the BASE_URL
       audience: `${process.env.CLIENT_URL}`, // Should match your JWT audience, which is the BASE_URL by default
     });
-    console.log(payload);
     req.user = payload;
     next();
   } catch (error) {
@@ -54,14 +54,9 @@ async function run() {
 
     const db = client.db("doctimedb");
     const doctorsCollection = db.collection("doctors");
+    const appointmentsCollection = db.collection("appointments");
 
     await doctorsCollection.createIndex({ rating: -1 });
-
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!",
-    // );
 
     // GET /doctors - Retrieve and return all doctors from the database
     app.get("/doctors", async (req, res) => {
@@ -82,6 +77,28 @@ async function run() {
       const query = { _id: new ObjectId(doctorId) };
       const result = await doctorsCollection.findOne(query);
       res.send(result);
+    });
+
+    app.post("/appointments", verifyToken, async (req, res) => {
+      const user = req.user.sub;
+      const { doctorId, gender, phone, date, time, reason } = req.body;
+
+      if (!ObjectId.isValid(doctorId)) {
+        return res.status(400).json({ message: "Invalid Doctor Id" });
+      }
+      const appointment = {
+        userId: user,
+        doctorId: new ObjectId(doctorId),
+        gender,
+        phone,
+        date,
+        time,
+        reason,
+        status: "pending",
+        createdAt: new Date(),
+      };
+      const result = await appointmentsCollection.insertOne(appointment);
+      res.status(201).send(result);
     });
   } finally {
     // Ensures that the client will close when you finish/error
