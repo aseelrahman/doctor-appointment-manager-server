@@ -79,6 +79,28 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/appointments", verifyToken, async (req, res) => {
+      const user = new ObjectId(req.user.sub);
+      const cursor = appointmentsCollection.aggregate([
+        {
+          $match: { userId: user },
+        },
+        {
+          $lookup: {
+            from: "doctors",
+            localField: "doctorId",
+            foreignField: "_id",
+            as: "doctor",
+          },
+        },
+        {
+          $unwind: "$doctor",
+        },
+      ]);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     app.post("/appointments", verifyToken, async (req, res) => {
       const user = req.user.sub;
       const { doctorId, gender, phone, date, time, reason } = req.body;
@@ -87,7 +109,7 @@ async function run() {
         return res.status(400).json({ message: "Invalid Doctor Id" });
       }
       const appointment = {
-        userId: user,
+        userId: new ObjectId(user),
         doctorId: new ObjectId(doctorId),
         gender,
         phone,
