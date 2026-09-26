@@ -101,6 +101,29 @@ async function run() {
       res.send(result);
     });
 
+    app.delete(
+      "/appointments/:appointmentId",
+      verifyToken,
+      async (req, res) => {
+        const user = new ObjectId(req.user.sub);
+        const { appointmentId } = req.params;
+
+        if (!ObjectId.isValid(appointmentId)) {
+          return res.status(400).json({ message: "Invalid Appointment Id" });
+        }
+        const query = { _id: new ObjectId(appointmentId), userId: user };
+        const result = await appointmentsCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: "Appointment not found" });
+        }
+
+        return res.status(200).json({
+          message: "Appointment deleted successfully",
+        });
+      },
+    );
+
     app.post("/appointments", verifyToken, async (req, res) => {
       const user = req.user.sub;
       const { doctorId, gender, phone, date, time, reason } = req.body;
