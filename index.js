@@ -124,6 +124,50 @@ async function run() {
       },
     );
 
+    app.patch("/appointments/:appointmentId", verifyToken, async (req, res) => {
+      const user = new ObjectId(req.user.sub);
+      const { appointmentId } = req.params;
+
+      if (!ObjectId.isValid(appointmentId)) {
+        return res.status(400).json({ message: "Invalid Appointment Id" });
+      }
+      const { date, phone, time, reason } = req.body;
+      const updates = {};
+      if (date !== undefined) {
+        updates.date = date;
+      }
+
+      if (phone !== undefined) {
+        updates.phone = phone;
+      }
+
+      if (time !== undefined) {
+        updates.time = time;
+      }
+
+      if (reason !== undefined) {
+        updates.reason = reason;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res
+          .status(400)
+          .json({ message: "No valid fields provided for update" });
+      }
+      const query = { _id: new ObjectId(appointmentId), userId: user };
+      const result = await appointmentsCollection.updateOne(query, {
+        $set: updates,
+      });
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ message: "Appointment not found" });
+      }
+
+      return res
+        .status(200)
+        .json({ message: "Appointment updated successfully" });
+    });
+
     app.post("/appointments", verifyToken, async (req, res) => {
       const user = req.user.sub;
       const { doctorId, gender, phone, date, time, reason } = req.body;
