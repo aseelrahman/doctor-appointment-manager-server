@@ -1,20 +1,20 @@
-import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
+import dotenv from "dotenv";
+import express from "express";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 
 dotenv.config();
 
 const app = express();
+const port = process.env.PORT || 5005;
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-const port = process.env.PORT || 5005;
-const uri = process.env.MONGODB_URI;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
+// MongoDB
+const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
@@ -22,68 +22,136 @@ const client = new MongoClient(uri, {
   },
 });
 
+const db = client.db("doctimedb");
+const doctorsCollection = db.collection("doctors");
+const appointmentsCollection = db.collection("appointments");
+
+// JWT
 const JWKS = createRemoteJWKSet(
   new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
 );
-
-console.log(JWKS);
 
 const verifyToken = async (req, res, next) => {
   const { authorization } = req.headers;
 
   if (!authorization?.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return res.status(401).json({
+      message: "Unauthorized",
+    });
   }
+
   const token = authorization.split(" ")[1];
+
   try {
     const { payload } = await jwtVerify(token, JWKS, {
-      issuer: `${process.env.CLIENT_URL}`, // Should match your JWT issuer, which is the BASE_URL
-      audience: `${process.env.CLIENT_URL}`, // Should match your JWT audience, which is the BASE_URL by default
+      issuer: process.env.CLIENT_URL,
+      audience: process.env.CLIENT_URL,
     });
+
     req.user = payload;
+
     next();
   } catch (error) {
     console.error("Token validation failed:", error);
-    return res.status(401).json({ message: "Unauthorized" });
+
+    return res.status(401).json({
+      message: "Unauthorized",
+    });
   }
 };
-async function run() {
+
+// -------------------------
+// Home
+// -------------------------
+
+app.get("/", (req, res) => {
+  res.send("DocTime API is running!");
+});
+
+// -------------------------
+// Doctors
+// -------------------------
+
+// Get all doctors
+app.get("/doctors", async (req, res) => {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    const doctors = await doctorsCollection.find().toArray();
 
-    const db = client.db("doctimedb");
-    const doctorsCollection = db.collection("doctors");
-    const appointmentsCollection = db.collection("appointments");
+    res.status(200).send(doctors);
+  } catch (error) {
+    console.error("Failed to fetch doctors:", error);
 
-    await doctorsCollection.createIndex({ rating: -1 });
+    res.status(500).json({
+      message: "Failed to fetch doctors",
+    });
+  }
+});
 
-    // GET /doctors - Retrieve and return all doctors from the database
-    app.get("/doctors", async (req, res) => {
-      const cursor = doctorsCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
+// Get top-rated doctors
+app.get("/doctors/top-rated", async (req, res) => {
+  try {
+    const doctors = await doctorsCollection
+      .find()
+      .sort({ rating: -1 })
+      .limit(3)
+      .toArray();
+
+    res.status(200).send(doctors);
+  } catch (error) {
+    console.error("Failed to fetch top doctors:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch top doctors",
+    });
+  }
+});
+
+// Get doctor by ID
+app.get("/doctors/:doctorId", verifyToken, async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    if (!ObjectId.isValid(doctorId)) {
+      return res.status(400).json({
+        message: "Invalid Doctor Id",
+      });
+    }
+
+    const doctor = await doctorsCollection.findOne({
+      _id: new ObjectId(doctorId),
     });
 
-    app.get("/doctors/top-rated", async (req, res) => {
-      const cursor = doctorsCollection.find().sort({ rating: -1 }).limit(3);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
+    if (!doctor) {
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
+    }
 
-    // GET /doctors/:doctorId - Retrieve a specific doctor by ID
-    app.get("/doctors/:doctorId", verifyToken, async (req, res) => {
-      const { doctorId } = req.params;
-      const query = { _id: new ObjectId(doctorId) };
-      const result = await doctorsCollection.findOne(query);
-      res.send(result);
-    });
+    res.status(200).send(doctor);
+  } catch (error) {
+    console.error("Failed to fetch doctor:", error);
 
-    app.get("/appointments", verifyToken, async (req, res) => {
-      const user = new ObjectId(req.user.sub);
-      const cursor = appointmentsCollection.aggregate([
+    res.status(500).json({
+      message: "Failed to fetch doctor",
+    });
+  }
+});
+
+// -------------------------
+// Appointments
+// -------------------------
+
+// Get current user's appointments
+app.get("/appointments", verifyToken, async (req, res) => {
+  try {
+    const userId = new ObjectId(req.user.sub);
+
+    const appointments = await appointmentsCollection
+      .aggregate([
         {
-          $match: { userId: user },
+          $match: {
+            userId,
+          },
         },
         {
           $lookup: {
@@ -96,110 +164,159 @@ async function run() {
         {
           $unwind: "$doctor",
         },
-      ]);
-      const result = await cursor.toArray();
-      res.send(result);
+      ])
+      .toArray();
+
+    res.status(200).send(appointments);
+  } catch (error) {
+    console.error("Failed to fetch appointments:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch appointments",
     });
+  }
+});
 
-    app.delete(
-      "/appointments/:appointmentId",
-      verifyToken,
-      async (req, res) => {
-        const user = new ObjectId(req.user.sub);
-        const { appointmentId } = req.params;
+// Create appointment
+app.post("/appointments", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.sub;
+    const { doctorId, gender, phone, date, time, reason } = req.body;
 
-        if (!ObjectId.isValid(appointmentId)) {
-          return res.status(400).json({ message: "Invalid Appointment Id" });
-        }
-        const query = { _id: new ObjectId(appointmentId), userId: user };
-        const result = await appointmentsCollection.deleteOne(query);
+    if (!ObjectId.isValid(doctorId)) {
+      return res.status(400).json({
+        message: "Invalid Doctor Id",
+      });
+    }
 
-        if (result.deletedCount === 0) {
-          return res.status(404).json({ message: "Appointment not found" });
-        }
+    const appointment = {
+      userId: new ObjectId(userId),
+      doctorId: new ObjectId(doctorId),
+      gender,
+      phone,
+      date,
+      time,
+      reason,
+      status: "pending",
+      createdAt: new Date(),
+    };
 
-        return res.status(200).json({
-          message: "Appointment deleted successfully",
-        });
+    const result = await appointmentsCollection.insertOne(appointment);
+
+    res.status(201).send(result);
+  } catch (error) {
+    console.error("Failed to create appointment:", error);
+
+    res.status(500).json({
+      message: "Failed to create appointment",
+    });
+  }
+});
+
+// Update appointment
+app.patch("/appointments/:appointmentId", verifyToken, async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+
+    if (!ObjectId.isValid(appointmentId)) {
+      return res.status(400).json({
+        message: "Invalid Appointment Id",
+      });
+    }
+
+    const userId = new ObjectId(req.user.sub);
+
+    const { date, phone, time, reason } = req.body;
+
+    const updates = {};
+
+    if (date !== undefined) {
+      updates.date = date;
+    }
+
+    if (phone !== undefined) {
+      updates.phone = phone;
+    }
+
+    if (time !== undefined) {
+      updates.time = time;
+    }
+
+    if (reason !== undefined) {
+      updates.reason = reason;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        message: "No valid fields provided for update",
+      });
+    }
+
+    const result = await appointmentsCollection.updateOne(
+      {
+        _id: new ObjectId(appointmentId),
+        userId,
+      },
+      {
+        $set: updates,
       },
     );
 
-    app.patch("/appointments/:appointmentId", verifyToken, async (req, res) => {
-      const user = new ObjectId(req.user.sub);
-      const { appointmentId } = req.params;
-
-      if (!ObjectId.isValid(appointmentId)) {
-        return res.status(400).json({ message: "Invalid Appointment Id" });
-      }
-      const { date, phone, time, reason } = req.body;
-      const updates = {};
-      if (date !== undefined) {
-        updates.date = date;
-      }
-
-      if (phone !== undefined) {
-        updates.phone = phone;
-      }
-
-      if (time !== undefined) {
-        updates.time = time;
-      }
-
-      if (reason !== undefined) {
-        updates.reason = reason;
-      }
-
-      if (Object.keys(updates).length === 0) {
-        return res
-          .status(400)
-          .json({ message: "No valid fields provided for update" });
-      }
-      const query = { _id: new ObjectId(appointmentId), userId: user };
-      const result = await appointmentsCollection.updateOne(query, {
-        $set: updates,
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        message: "Appointment not found",
       });
+    }
 
-      if (result.matchedCount === 0) {
-        return res.status(404).json({ message: "Appointment not found" });
-      }
-
-      return res
-        .status(200)
-        .json({ message: "Appointment updated successfully" });
+    res.status(200).json({
+      message: "Appointment updated successfully",
     });
+  } catch (error) {
+    console.error("Failed to update appointment:", error);
 
-    app.post("/appointments", verifyToken, async (req, res) => {
-      const user = req.user.sub;
-      const { doctorId, gender, phone, date, time, reason } = req.body;
-
-      if (!ObjectId.isValid(doctorId)) {
-        return res.status(400).json({ message: "Invalid Doctor Id" });
-      }
-      const appointment = {
-        userId: new ObjectId(user),
-        doctorId: new ObjectId(doctorId),
-        gender,
-        phone,
-        date,
-        time,
-        reason,
-        status: "pending",
-        createdAt: new Date(),
-      };
-      const result = await appointmentsCollection.insertOne(appointment);
-      res.status(201).send(result);
+    res.status(500).json({
+      message: "Failed to update appointment",
     });
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
   }
-}
-run().catch(console.dir);
-
-app.get("/", (req, res) => {
-  res.send("Hello World!");
 });
 
+// Delete appointment
+app.delete("/appointments/:appointmentId", verifyToken, async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+
+    if (!ObjectId.isValid(appointmentId)) {
+      return res.status(400).json({
+        message: "Invalid Appointment Id",
+      });
+    }
+
+    const userId = new ObjectId(req.user.sub);
+
+    const result = await appointmentsCollection.deleteOne({
+      _id: new ObjectId(appointmentId),
+      userId,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        message: "Appointment not found",
+      });
+    }
+
+    res.status(200).json({
+      message: "Appointment deleted successfully",
+    });
+  } catch (error) {
+    console.error("Failed to delete appointment:", error);
+
+    res.status(500).json({
+      message: "Failed to delete appointment",
+    });
+  }
+});
+
+// Start server
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`DocTime API running on port ${port}`);
 });
