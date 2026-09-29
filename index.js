@@ -75,7 +75,20 @@ app.get("/", (req, res) => {
 // Get all doctors
 app.get("/doctors", async (req, res) => {
   try {
-    const doctors = await doctorsCollection.find().toArray();
+    const { search } = req.query;
+
+    const query = {};
+
+    if (search) {
+      if (search) {
+        query.name = {
+          $regex: search,
+          $options: "i",
+        };
+      }
+    }
+
+    const doctors = await doctorsCollection.find(query).toArray();
 
     res.status(200).send(doctors);
   } catch (error) {
